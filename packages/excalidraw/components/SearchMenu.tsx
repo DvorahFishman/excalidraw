@@ -8,6 +8,7 @@ import {
   FONT_FAMILY,
   FRAME_STYLE,
   getLineHeight,
+  isRTL,
 } from "@excalidraw/common";
 
 import {
@@ -626,6 +627,58 @@ const normalizeWrappedText = (
   return normalizedLines.join("\n");
 };
 
+const measureMatchInDOM = (
+  textElement: ExcalidrawTextElement,
+  line: string,
+  startInLine: number,
+  length: number,
+) => {
+  if (line === "") {
+    return { offsetX: 0, width: 0 };
+  }
+
+  if (typeof Range.prototype.getBoundingClientRect !== "function") {
+    // environments without layout support (e.g. jsdom in tests)
+    const font = getFontString(textElement);
+    const before = measureText(
+      line.slice(0, startInLine),
+      font,
+      textElement.lineHeight,
+    );
+    const matched = measureText(
+      line.slice(startInLine, startInLine + length),
+      font,
+      textElement.lineHeight,
+    );
+    return {
+      offsetX: startInLine === 0 ? 0 : before.width,
+      width: matched.width,
+    };
+  }
+
+  const span = document.createElement("span");
+  span.style.position = "fixed";
+  span.style.top = "0";
+  span.style.left = "0";
+  span.style.visibility = "hidden";
+  span.style.whiteSpace = "pre";
+  span.style.font = getFontString(textElement);
+  span.dir = isRTL(textElement.text) ? "rtl" : "ltr";
+  span.textContent = line;
+  document.body.appendChild(span);
+
+  const range = document.createRange();
+  range.setStart(span.firstChild!, startInLine);
+  range.setEnd(span.firstChild!, startInLine + length);
+
+  const spanRect = span.getBoundingClientRect();
+  const rect = range.getBoundingClientRect();
+
+  document.body.removeChild(span);
+
+  return { offsetX: rect.left - spanRect.left, width: rect.width };
+};
+
 const getMatchedLines = (
   textElement: ExcalidrawTextElement,
   searchQuery: SearchQuery,
@@ -665,6 +718,8 @@ const getMatchedLines = (
   );
   const matchedLines: SearchMatch["matchedLines"] = [];
 
+  const rawLines = textElement.text.split("\n");
+
   for (const lineIndexRange of lineIndexRanges) {
     if (remainingQuery === "") {
       break;
@@ -675,53 +730,50 @@ const getMatchedLines = (
       startIndex <= lineIndexRange.endIndex
     ) {
       const matchCapacity = lineIndexRange.endIndex + 1 - startIndex;
-      const textToStart = lineIndexRange.line.slice(
-        0,
-        startIndex - lineIndexRange.startIndex,
-      );
 
       const matchedWord = remainingQuery.slice(0, matchCapacity);
       remainingQuery = remainingQuery.slice(matchCapacity);
-
-      const offset = measureText(
-        textToStart,
-        getFontString(textElement),
-        textElement.lineHeight,
+      const rawLine = rawLines[lineIndexRange.lineNumber];
+      const startInLine = startIndex - lineIndexRange.startIndex;
+      const lengthInLine = Math.min(
+        matchedWord.length,
+        rawLine.length - startInLine,
       );
 
-      // measureText returns a non-zero width for the empty string
-      // which is not what we're after here, hence the check and the correction
-      if (textToStart === "") {
-        offset.width = 0;
-      }
+      let spaceToStart = 0;
 
       if (textElement.textAlign !== "left" && lineIndexRange.line.length > 0) {
         const lineLength = measureText(
-          lineIndexRange.line,
+          rawLine,
           getFontString(textElement),
           textElement.lineHeight,
         );
 
-        const spaceToStart =
+        spaceToStart =
           textElement.textAlign === "center"
             ? (textElement.width - lineLength.width) / 2
             : textElement.width - lineLength.width;
-        offset.width += spaceToStart;
       }
 
-      const { width, height } = measureText(
+      const { height } = measureText(
         matchedWord,
         getFontString(textElement),
         textElement.lineHeight,
       );
 
-      const offsetX = offset.width;
-      const offsetY = lineIndexRange.lineNumber * offset.height;
+      const offsetY = lineIndexRange.lineNumber * height;
+
+      const measured = measureMatchInDOM(
+        textElement,
+        rawLine,
+        startIndex - lineIndexRange.startIndex,
+        matchedWord.length,
+      );
 
       matchedLines.push({
-        offsetX,
+        offsetX: measured.offsetX + spaceToStart,
         offsetY,
-        width,
+        width: measured.width,
         height,
         showOnCanvas: true,
       });

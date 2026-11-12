@@ -194,4 +194,34 @@ describe("search", () => {
       expect(h.app.state.searchMatches?.matches.length).toBe(3);
     });
   });
+
+  it("should return a valid highlight position for mixed RTL and LTR text with trailing space", async () => {
+    API.setElements([
+      API.createElement({
+        type: "text",
+        text: "",
+      }),
+    ]);
+
+    API.updateElement(h.elements[0] as ExcalidrawTextElement, {
+      text: "hello שלום world ",
+      originalText: "hello שלום world ",
+    });
+
+    Keyboard.withModifierKeys({ ctrl: true }, () => {
+      Keyboard.keyPress(KEYS.F);
+    });
+
+    const searchInput = await querySearchInput();
+    updateTextEditor(searchInput, "שלום");
+
+    await waitFor(() => {
+      const matchedLine =
+        h.app.state.searchMatches?.matches[0]?.matchedLines[0];
+      expect(h.app.state.searchMatches?.matches.length).toBe(1);
+      expect(matchedLine).toBeDefined();
+      expect(Number.isFinite(matchedLine?.offsetX)).toBe(true);
+      expect(matchedLine?.width).toBeGreaterThan(0);
+    });
+  });
 });
